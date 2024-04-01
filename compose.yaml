@@ -1,0 +1,18 @@
+services:
+  RTA-nuxt:
+    build: ./Frontend
+    image: rta-nuxt
+    container_name: rta-nuxt
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      - BACKEND_HOST=localhost:3001
+  RTA-ASP.NET:
+    build: ./Backend
+    image: rta-asp.net
+    container_name: rta-asp.net
+    restart: unless-stopped
+    ports:
+      - 3001:8080
+  

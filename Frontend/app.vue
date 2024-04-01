@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import 'element-plus/theme-chalk/dark/css-vars.css'
+import {useDark} from "@vueuse/core";
+
+useDark(true)
 </script>
 
 <template>
-  <html class="dark">
-    <NuxtPage />
-  </html>
+  <NuxtPage />
 </template>
 
 <style>

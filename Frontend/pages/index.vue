@@ -25,7 +25,7 @@ const load_regex = async () => {
 }
 
 const send_request = async () => {
-  await fetch(`${backend_host.value.host}/api`, {
+  await fetch(`http://${backend_host.value.host}/api`, {
     method: 'POST',
     body: JSON.stringify({regex: input_regex.value}),
   }).then(x => x.text().then(xy => output_NFA.value = xy))
