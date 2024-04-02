@@ -7,7 +7,7 @@ services:
     ports:
       - 3000:3000
     environment:
-      - BACKEND_HOST=localhost:3001
+      - BACKEND_HOST=http://localhost:3001
   RTA-ASP.NET:
     build: ./Backend
     image: rta-asp.net

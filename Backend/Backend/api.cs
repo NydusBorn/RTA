@@ -7,9 +7,9 @@ public class Api : Controller
 
     [HttpPost]
     [Route("/api")]
-    public IActionResult Get()
+    public IActionResult Get([FromBody]string regex)
     {
-        return Ok("abc");
+        return Ok(Translator.Translate(regex));
     }
 
 }
