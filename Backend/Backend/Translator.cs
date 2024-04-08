@@ -1,3 +1,6 @@
+using System.Text;
+using Microsoft.Extensions.Primitives;
+
 namespace Backend;
 
 public static class Translator
@@ -11,15 +14,15 @@ public static class Translator
 
     private struct ExtentValue
     {
-        enum Type
+        public enum Type
         {
             Char,
             Extent
         }
 
-        Type ValueType { get; set; }
-        char? ValueChar { get; set; }
-        Extent? ValueExtent { get; set; }
+        public Type ValueType { get; set; }
+        public char? ValueChar { get; set; }
+        public Extent? ValueExtent { get; set; }
 
         public ExtentValue(char c)
         {
@@ -37,16 +40,86 @@ public static class Translator
     private struct Extent
     {
         public Operations Operation { get; set; }
-        public List<ExtentValue> Extents { get; set; }
+        public List<ExtentValue> Extents { get; set; } = new();
+        public List<State> States { get; set; } = new();
 
         public Extent(Operations o)
         {
             Operation = o;
-            Extents = new List<ExtentValue>();
         }
     }
 
-    public static string Translate(string fullRegex)
+    private struct Automaton
+    {
+        public List<State> States { get; set; } = new();
+
+        public Automaton()
+        {
+            States.Add(new("s"));
+        }
+
+        public override string ToString()
+        {
+            List<char> alphabet = new();
+            foreach (var state in States)
+            {
+                foreach (var transition in state.Transitions)
+                {
+                    if (!alphabet.Contains(transition.Key))
+                    {
+                        alphabet.Add(transition.Key);
+                    }
+                }
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append('\t');
+            foreach (var val in alphabet)
+            {
+                sb.Append($"'{val}'\t");
+            }
+
+            sb.Append('\n');
+            foreach (var state in States)
+            {
+                sb.Append($"{state.Name}\t");
+                foreach (var val in alphabet)
+                {
+                    if (state.Transitions.ContainsKey(val))
+                    {
+                        var sbb = new StringBuilder();
+                        sbb.Append('{');
+                        foreach (var linkState in state.Transitions[val])
+                        {
+                            sbb.Append($"{linkState.Name},");
+                        }
+                        sbb.Remove(sbb.Length - 1, 1);
+                        sbb.Append('}');
+                        sb.Append($"{sbb}\t");
+                    }
+                    else
+                    {
+                        sb.Append(" \t");
+                    }
+                }
+                sb.Append('\n');
+            }
+            return sb.ToString();
+        }
+    }
+
+    private class State
+    {
+        public string Name { get; set; }
+        public Dictionary<char, HashSet<State>> Transitions { get; set; } = new();
+
+        public State(string name)
+        {
+            Name = name;
+        }
+    }
+
+    public static (string Automaton, string MermaidGraph) Translate(string fullRegex)
     {
         static Extent FindExtents(string regexPart)
         {
@@ -92,133 +165,148 @@ public static class Translator
             switch (expectedOperation)
             {
                 case Operations.Concatenation:
-                {
-                    string currentPart = "";
-                    bool searchingForEnd = false;
-                    for (int i = 0; i < regexPart.Length; i++)
                     {
-                        switch (regexPart[i])
+                        string currentPart = "";
+                        int indentLevel = 0;
+                        for (int i = 0; i < regexPart.Length; i++)
                         {
-                            case '(':
-                                searchingForEnd = true;
-                                currentPart += regexPart[i];
-                                if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
-                                {
-                                    throw new InvalidDataException($"Unexpected '^' after '(' at {i + 1}");
-                                }
-
-                                break;
-                            case ')':
-                                if (!searchingForEnd)
-                                {
-                                    throw new InvalidDataException($"Unexpected ')' at {i}");
-                                }
-
-                                currentPart += regexPart[i];
-                                if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
-                                {
-                                    currentPart += regexPart[i + 1];
-                                    i += 1;
-                                }
-                                searchingForEnd = false;
-                                extent.Extents.Add(new(FindExtents(currentPart)));
-                                currentPart = "";
-                                break;
-                            default:
-                                if (searchingForEnd)
-                                {
+                            switch (regexPart[i])
+                            {
+                                case '(':
+                                    indentLevel += 1;
                                     currentPart += regexPart[i];
-                                }
-                                else
-                                {
                                     if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
                                     {
-                                        extent.Extents.Add(new(new Extent()
-                                        {
-                                            Operation = Operations.Repetition,
-                                            Extents = [new(regexPart[i])]
-                                        }));
-                                        i += 1;
+                                        throw new InvalidDataException($"Unexpected '^' after '(' at {i + 1}");
+                                    }
+
+                                    break;
+                                case ')':
+                                    if (indentLevel == 0)
+                                    {
+                                        throw new InvalidDataException($"Unexpected ')' at {i}");
                                     }
                                     else
                                     {
-                                        extent.Extents.Add(new(regexPart[i]));
+                                        indentLevel -= 1;
                                     }
-                                }
 
-                                break;
+                                    currentPart += regexPart[i];
+                                    if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
+                                    {
+                                        currentPart += regexPart[i + 1];
+                                        i += 1;
+                                    }
+
+                                    if (indentLevel == 0)
+                                    {
+                                        extent.Extents.Add(new(FindExtents(currentPart)));
+                                        currentPart = "";
+                                    }
+                                    break;
+                                default:
+                                    if (indentLevel >= 1)
+                                    {
+                                        currentPart += regexPart[i];
+                                    }
+                                    else
+                                    {
+                                        if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
+                                        {
+                                            extent.Extents.Add(new(new Extent()
+                                            {
+                                                Operation = Operations.Repetition,
+                                                Extents = [new(regexPart[i])],
+                                                States = new()
+                                            }));
+                                            i += 1;
+                                        }
+                                        else
+                                        {
+                                            extent.Extents.Add(new(regexPart[i]));
+                                        }
+                                    }
+
+                                    break;
+                            }
                         }
-                    }
 
-                    if (searchingForEnd)
-                    {
-                        throw new InvalidDataException("Missing ')'");
-                    }
-
-                    break;
-                }
-                case Operations.Union:
-                {
-                    string currentPart = "";
-                    bool searchingForEnd = false;
-                    for (int i = 0; i < regexPart.Length; i++)
-                    {
-                        switch (regexPart[i])
+                        if (indentLevel != 0)
                         {
-                            case '(':
-                                searchingForEnd = true;
-                                extent.Extents.Add(new(FindExtents(currentPart)));
-                                currentPart = "";
-                                currentPart += regexPart[i];
-                                if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
-                                {
-                                    throw new InvalidDataException($"Unexpected '^' after '(' at {i + 1}");
-                                }
-                                break;
-                            case ')':
-                                if (!searchingForEnd)
-                                {
-                                    throw new InvalidDataException($"Unexpected ')' at {i}");
-                                }
-                                currentPart += regexPart[i];
-                                if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
-                                {
-                                    currentPart += regexPart[i + 1];
-                                    i += 1;
-                                }
-                                searchingForEnd = false;
-                                extent.Extents.Add(new(FindExtents(currentPart)));
-                                currentPart = "";
-                                break;
-                            case '|':
-                                if (!searchingForEnd)
-                                {
+                            throw new InvalidDataException("Missing ')'");
+                        }
+
+                        break;
+                    }
+                case Operations.Union:
+                    {
+                        string currentPart = "";
+                        int indentLevel = 0;
+                        for (int i = 0; i < regexPart.Length; i++)
+                        {
+                            switch (regexPart[i])
+                            {
+                                case '(':
+                                    indentLevel += 1;
                                     extent.Extents.Add(new(FindExtents(currentPart)));
                                     currentPart = "";
-                                }
-                                break;
-                            default:
-                                currentPart += regexPart[i];
-                                break;
+                                    currentPart += regexPart[i];
+                                    if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
+                                    {
+                                        throw new InvalidDataException($"Unexpected '^' after '(' at {i + 1}");
+                                    }
+                                    break;
+                                case ')':
+                                    if (indentLevel == 0)
+                                    {
+                                        throw new InvalidDataException($"Unexpected ')' at {i}");
+                                    }
+                                    else
+                                    {
+                                        indentLevel -= 1;
+                                    }
+                                    currentPart += regexPart[i];
+                                    if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
+                                    {
+                                        currentPart += regexPart[i + 1];
+                                        i += 1;
+                                    }
+
+                                    if (indentLevel == 0)
+                                    {
+                                        extent.Extents.Add(new(FindExtents(currentPart)));
+                                        currentPart = "";
+                                    }
+                                    break;
+                                case '|':
+                                    if (indentLevel == 0)
+                                    {
+                                        extent.Extents.Add(new(FindExtents(currentPart)));
+                                        currentPart = "";
+                                    }
+                                    break;
+                                default:
+                                    currentPart += regexPart[i];
+                                    break;
+                            }
                         }
-                    }
 
-                    if (searchingForEnd)
-                    {
-                        throw new InvalidDataException("Missing ')'");
-                    }
+                        if (indentLevel != 0)
+                        {
+                            throw new InvalidDataException("Missing ')'");
+                        }
 
-                    if (currentPart.Length > 0)
-                    {
-                        extent.Extents.Add(new(FindExtents(currentPart)));
+                        if (currentPart.Length > 0)
+                        {
+                            extent.Extents.Add(new(FindExtents(currentPart)));
+                        }
+                        break;
                     }
-                    break;
-                }
                 case Operations.Repetition:
-                {
-                    extent.Extents.Add(new(FindExtents(regexPart)));
-                    break;
-                }
+                    {
+                        extent.Extents.Add(new(FindExtents(regexPart)));
+                        break;
+                    }
                 default:
                     throw new ArgumentOutOfRangeException("expectedOperation is out of range");
             }
@@ -226,8 +314,174 @@ public static class Translator
             return extent;
         }
 
-        //TODO: Implement translation from intermediate to table of states, and return table and mermaid graph strings
-        FindExtents(fullRegex);
-        return "Garbage";
+        var fullExtent = FindExtents(fullRegex);
+
+        var automaton = new Automaton();
+
+        void EnrichExtent(Extent localExtent)
+        {
+            switch (localExtent.Operation)
+            {
+                case Operations.Concatenation:
+                    foreach (var extent in localExtent.Extents)
+                    {
+                        if (extent.ValueType == ExtentValue.Type.Char)
+                        {
+                            automaton.States.Add(new($"q{automaton.States.Count}"));
+                            localExtent.States.Add(automaton.States[^1]);
+                        }
+                        else
+                        {
+                            EnrichExtent(extent.ValueExtent!.Value);
+                        }
+                    }
+                    break;
+                case Operations.Union:
+                    foreach (var extent in localExtent.Extents)
+                    {
+                        if (extent.ValueType == ExtentValue.Type.Extent)
+                        {
+                            EnrichExtent(extent.ValueExtent!.Value);
+                        }
+                        else
+                        {
+                            throw new NotImplementedException("Did not implement union char extentvalue expansion");
+                        }
+                    }
+                    break;
+                case Operations.Repetition:
+                    {
+                        var extent = localExtent.Extents[0];
+                        if (extent.ValueType == ExtentValue.Type.Char)
+                        {
+                            automaton.States.Add(new($"q{automaton.States.Count}"));
+                            localExtent.States.Add(automaton.States[^1]);
+                        }
+                        else
+                        {
+                            EnrichExtent(extent.ValueExtent!.Value);
+                        }
+                        break;
+                    }
+                default:
+                    throw new ArgumentOutOfRangeException("expectedOperation is out of range");
+            }
+        }
+
+        EnrichExtent(fullExtent);
+
+        HashSet<State> MakeAutomaton(Extent localExtent, HashSet<State>? starterStates = null)
+        {
+            var exitStates = new HashSet<State>();
+            switch (localExtent.Operation)
+            {
+                case Operations.Concatenation:
+                    int directStates = 0;
+                    for (var index = 0; index < localExtent.Extents.Count; index++)
+                    {
+                        var extent = localExtent.Extents[index];
+                        if (extent.ValueType == ExtentValue.Type.Char)
+                        {
+                            foreach (var starterState in starterStates)
+                            {
+                                if (!starterState.Transitions.ContainsKey(extent.ValueChar!.Value))
+                                {
+                                    starterState.Transitions.Add(extent.ValueChar.Value, [localExtent.States[directStates]]);
+                                }
+                                else
+                                {
+                                    starterState.Transitions[extent.ValueChar.Value].Add(localExtent.States[directStates]);
+                                }
+                            }
+                            starterStates = [localExtent.States[directStates]];
+                            if (index == localExtent.Extents.Count - 1)
+                            {
+                                exitStates.Add(localExtent.States[directStates]);
+                            }
+                            directStates += 1;
+                        }
+                        else
+                        {
+                            var foundExits = MakeAutomaton(extent.ValueExtent!.Value, starterStates);
+                            if (index == localExtent.Extents.Count - 1)
+                            {
+                                exitStates.UnionWith(foundExits);
+                            }
+                            starterStates = foundExits;
+                        }
+                    }
+                    break;
+                case Operations.Union:
+                    foreach (var extent in localExtent.Extents)
+                    {
+                        if (extent.ValueType == ExtentValue.Type.Extent)
+                        {
+                            exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates));
+                        }
+                        else
+                        {
+                            throw new NotImplementedException("Did not implement union char extentvalue expansion");
+                        }
+                    }
+                    break;
+                case Operations.Repetition:
+                    {
+                        var extent = localExtent.Extents[0];
+                        if (extent.ValueType == ExtentValue.Type.Char)
+                        {
+                            var state = localExtent.States[0];
+                            foreach (var starterState in starterStates)
+                            {
+                                if (!starterState.Transitions.ContainsKey(extent.ValueChar!.Value))
+                                {
+                                    starterState.Transitions.Add(extent.ValueChar.Value, [automaton.States[^1]]);
+                                }
+                                else
+                                {
+                                    starterState.Transitions[extent.ValueChar.Value].Add(automaton.States[^1]);
+                                }
+                            }
+
+                            if (!state.Transitions.ContainsKey(extent.ValueChar!.Value))
+                            {
+                                state.Transitions.Add(extent.ValueChar.Value, [state]);
+                            }
+                            else
+                            {
+                                state.Transitions[extent.ValueChar.Value].Add(state);
+                            }
+                        }
+                        else
+                        {
+                            exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates));
+                        }
+                        break;
+                    }
+                default:
+                    throw new ArgumentOutOfRangeException("expectedOperation is out of range");
+            }
+            return exitStates;
+        }
+
+        MakeAutomaton(fullExtent, [automaton.States[0]]);
+
+        static string MakeGraph(List<State> states)
+        {
+            var sb = new StringBuilder();
+            sb.Append("flowchart LR\n");
+            foreach (var state in states)
+            {
+                foreach (var pair in state.Transitions)
+                {
+                    foreach (var dest in pair.Value)
+                    {
+                        sb.AppendLine($"{state.Name}(({state.Name})) -->|{pair.Key}| {dest.Name}(({dest.Name}))");
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+
+        return (automaton.ToString(), MakeGraph(automaton.States));
     }
 }
