@@ -129,10 +129,18 @@ public static class Translator
             }
 
             Operations expectedOperation = Operations.Concatenation;
-            if (regexPart[0] == '(' && regexPart[^2] == ')' && regexPart[^1] == '^' && regexPart.Length >= 4)
+            if (regexPart[0] == '(' && regexPart[^2] == ')' && regexPart[^1] == '^' )
             {
-                expectedOperation = Operations.Repetition;
-                regexPart = regexPart.Substring(1, regexPart.Length - 3);
+                if (regexPart.Length >= 4)
+                {
+                    expectedOperation = Operations.Repetition;
+                    regexPart = regexPart.Substring(1, regexPart.Length - 3);
+                }
+                else
+                {
+                    throw new InvalidDataException($"Empty repetition found in {regexPart}");
+                }
+
             }
 
             while (regexPart[0] == '(' && regexPart[^1] == ')')
@@ -248,8 +256,6 @@ public static class Translator
                             {
                                 case '(':
                                     indentLevel += 1;
-                                    extent.Extents.Add(new(FindExtents(currentPart)));
-                                    currentPart = "";
                                     currentPart += regexPart[i];
                                     if (i + 1 < regexPart.Length && regexPart[i + 1] == '^')
                                     {
@@ -271,18 +277,20 @@ public static class Translator
                                         currentPart += regexPart[i + 1];
                                         i += 1;
                                     }
-
-                                    if (indentLevel == 0)
-                                    {
-                                        extent.Extents.Add(new(FindExtents(currentPart)));
-                                        currentPart = "";
-                                    }
                                     break;
                                 case '|':
                                     if (indentLevel == 0)
                                     {
+                                        if (regexPart[i + 1] == '^')
+                                        {
+                                            throw new InvalidDataException($"Unexpected '^' after '|' at {i + 1}");
+                                        }
                                         extent.Extents.Add(new(FindExtents(currentPart)));
                                         currentPart = "";
+                                    }
+                                    else
+                                    {
+                                        currentPart += regexPart[i];
                                     }
                                     break;
                                 default:
@@ -370,7 +378,7 @@ public static class Translator
 
         EnrichExtent(fullExtent);
 
-        HashSet<State> MakeAutomaton(Extent localExtent, HashSet<State>? starterStates = null)
+        HashSet<State> MakeAutomaton(Extent localExtent, HashSet<State>? starterStates = null, HashSet<State>? repeaterStates = null)
         {
             var exitStates = new HashSet<State>();
             switch (localExtent.Operation)
@@ -397,15 +405,34 @@ public static class Translator
                             if (index == localExtent.Extents.Count - 1)
                             {
                                 exitStates.Add(localExtent.States[directStates]);
+                                if (repeaterStates != null)
+                                {
+                                    foreach (var returnState in repeaterStates)
+                                    {
+                                        if (!localExtent.States[directStates].Transitions.ContainsKey('ɛ'))
+                                        {
+                                            localExtent.States[directStates].Transitions.Add('ɛ', [returnState]);
+                                        }
+                                        else
+                                        {
+                                            localExtent.States[directStates].Transitions['ɛ'].Add(returnState);
+                                        }
+                                    }
+                                }
                             }
                             directStates += 1;
                         }
                         else
                         {
-                            var foundExits = MakeAutomaton(extent.ValueExtent!.Value, starterStates);
+                            HashSet<State> foundExits;
                             if (index == localExtent.Extents.Count - 1)
                             {
+                                foundExits = MakeAutomaton(extent.ValueExtent!.Value, starterStates, repeaterStates);
                                 exitStates.UnionWith(foundExits);
+                            }
+                            else
+                            {
+                                foundExits = MakeAutomaton(extent.ValueExtent!.Value, starterStates);
                             }
                             starterStates = foundExits;
                         }
@@ -416,7 +443,7 @@ public static class Translator
                     {
                         if (extent.ValueType == ExtentValue.Type.Extent)
                         {
-                            exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates));
+                            exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates, repeaterStates));
                         }
                         else
                         {
@@ -434,11 +461,11 @@ public static class Translator
                             {
                                 if (!starterState.Transitions.ContainsKey(extent.ValueChar!.Value))
                                 {
-                                    starterState.Transitions.Add(extent.ValueChar.Value, [automaton.States[^1]]);
+                                    starterState.Transitions.Add(extent.ValueChar.Value, [state]);
                                 }
                                 else
                                 {
-                                    starterState.Transitions[extent.ValueChar.Value].Add(automaton.States[^1]);
+                                    starterState.Transitions[extent.ValueChar.Value].Add(state);
                                 }
                             }
 
@@ -450,10 +477,38 @@ public static class Translator
                             {
                                 state.Transitions[extent.ValueChar.Value].Add(state);
                             }
+
+                            if (repeaterStates != null)
+                            {
+                                foreach (var returnState in repeaterStates)
+                                {
+                                    if (!state.Transitions.ContainsKey('ɛ'))
+                                    {
+                                        state.Transitions.Add('ɛ', [returnState]);
+                                    }
+                                    else
+                                    {
+                                        state.Transitions['ɛ'].Add(returnState);
+                                    }
+                                }
+                            }
+
+                            exitStates.Add(state);
                         }
                         else
                         {
-                            exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates));
+                            if (repeaterStates != null)
+                            {
+                                var t = new HashSet<State>(repeaterStates);
+                                t.UnionWith(starterStates);
+                                exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates, t));
+                            }
+                            else
+                            {
+                                exitStates.UnionWith(MakeAutomaton(extent.ValueExtent!.Value, starterStates, starterStates));
+                            }
+
+                            exitStates.UnionWith(starterStates);
                         }
                         break;
                     }
