@@ -14,7 +14,7 @@ public class Api : Controller
         {
             if (regex == "")
             {
-                return Ok(("s", "flowchart LR \n\ts((s))").ToTuple()); //TODO make graph
+                return Ok(("*s", "flowchart LR \n\t*s((*s))").ToTuple()); //TODO make graph
             }
             return Ok(Translator.Translate(regex).ToTuple());
         }

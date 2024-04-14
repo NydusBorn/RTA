@@ -128,8 +128,33 @@ public static class Translator
                 regexPart = regexPart.Replace("^^", "^");
             }
 
+            bool can_trim(string regex)
+            {
+                bool can = regex[0] == '(';
+                if (!can) return false;
+                int indent = 1;
+                for (int i = 1; i < regex.Length; i++)
+                {
+                    if (regex[i] == '(')
+                    {
+                        indent += 1;
+                    }
+                    else if (regex[i] == ')')
+                    {
+                        indent -= 1;
+                        if (indent == 0 && !(i == regex.Length - 1 || (i == regex.Length - 2 && regex[i + 1] == '^')))
+                        {
+                            can = false;
+                            break;
+                        }
+                    }
+                }
+
+                return can;
+            }
+
             Operations expectedOperation = Operations.Concatenation;
-            if (regexPart[0] == '(' && regexPart[^2] == ')' && regexPart[^1] == '^' )
+            while (regexPart[0] == '(' && regexPart[^2] == ')' && regexPart[^1] == '^' && can_trim(regexPart))
             {
                 if (regexPart.Length >= 4)
                 {
@@ -143,7 +168,7 @@ public static class Translator
 
             }
 
-            while (regexPart[0] == '(' && regexPart[^1] == ')')
+            while (regexPart[0] == '(' && regexPart[^1] == ')' && can_trim(regexPart))
             {
                 regexPart = regexPart.Substring(1, regexPart.Length - 2);
             }
@@ -494,6 +519,7 @@ public static class Translator
                             }
 
                             exitStates.Add(state);
+                            exitStates.UnionWith(starterStates);
                         }
                         else
                         {
