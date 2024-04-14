@@ -37,6 +37,9 @@ public static class Translator
         }
     }
 
+    /// <summary>
+    /// Area within the automaton, subdivides the regex into manageable and convertible regions of consecutive same type operations
+    /// </summary>
     private struct Extent
     {
         public Operations Operation { get; set; }
@@ -49,6 +52,9 @@ public static class Translator
         }
     }
 
+    /// <summary>
+    /// Stores states recovered from regex, states are stored via a graph
+    /// </summary>
     private struct Automaton
     {
         public List<State> States { get; set; } = new();
@@ -118,16 +124,23 @@ public static class Translator
             Name = name;
         }
     }
-
+    /// <summary>
+    /// Gives a table of the automaton and a mermaid graph
+    /// </summary>
+    /// <param name="fullRegex">Regex to be turned into an automaton</param>
+    /// <returns></returns>
+    /// <exception cref="InvalidDataException">User input is faulty</exception>
+    /// <exception cref="NotImplementedException">It was assumed impossible to reach</exception>
     public static (string Automaton, string MermaidGraph) Translate(string fullRegex)
     {
+        // Subdivides the regex into extents
         static Extent FindExtents(string regexPart)
         {
             while (regexPart.Contains("^^"))
             {
                 regexPart = regexPart.Replace("^^", "^");
             }
-
+            // Whether thrimming the regex is possible without disrupting the logic
             bool can_trim(string regex)
             {
                 bool can = regex[0] == '(';
@@ -152,7 +165,7 @@ public static class Translator
 
                 return can;
             }
-
+            // Operation determination concatenation is expected until proven otherwise
             Operations expectedOperation = Operations.Concatenation;
             while (regexPart[0] == '(' && regexPart[^2] == ')' && regexPart[^1] == '^' && can_trim(regexPart))
             {
@@ -172,6 +185,7 @@ public static class Translator
             {
                 regexPart = regexPart.Substring(1, regexPart.Length - 2);
             }
+            // Repetition is more important than any other operation
             if (expectedOperation != Operations.Repetition)
             {
                 int indentLevel = 0;
@@ -180,6 +194,7 @@ public static class Translator
                     switch (inspected)
                     {
                         case '|':
+                            // Union is more important than concatenation
                             if (indentLevel == 0) expectedOperation = Operations.Union;
                             break;
                         case '(':
@@ -195,10 +210,12 @@ public static class Translator
             }
 
             Extent extent = new Extent(expectedOperation);
+            // Subdivision process, recursive
             switch (expectedOperation)
             {
                 case Operations.Concatenation:
                     {
+                        // Characters interpreted as char extents, anything else - a subextent
                         string currentPart = "";
                         int indentLevel = 0;
                         for (int i = 0; i < regexPart.Length; i++)
@@ -273,6 +290,7 @@ public static class Translator
                     }
                 case Operations.Union:
                     {
+                        // Everything is subextents, divided by |
                         string currentPart = "";
                         int indentLevel = 0;
                         for (int i = 0; i < regexPart.Length; i++)
@@ -337,11 +355,10 @@ public static class Translator
                     }
                 case Operations.Repetition:
                     {
+                        // Simply recurse further
                         extent.Extents.Add(new(FindExtents(regexPart)));
                         break;
                     }
-                default:
-                    throw new ArgumentOutOfRangeException("expectedOperation is out of range");
             }
 
             return extent;
@@ -353,11 +370,14 @@ public static class Translator
 
         void EnrichExtent(Extent localExtent)
         {
+            // Add all states required to make the automata work
             switch (localExtent.Operation)
             {
                 case Operations.Concatenation:
-                    foreach (var extent in localExtent.Extents)
+                    // if an extent is a simple character, it is stored for later reference, that also makes a corresponding state
+                    for (var index = 0; index < localExtent.Extents.Count; index++)
                     {
+                        var extent = localExtent.Extents[index];
                         if (extent.ValueType == ExtentValue.Type.Char)
                         {
                             automaton.States.Add(new($"q{automaton.States.Count}"));
@@ -368,6 +388,7 @@ public static class Translator
                             EnrichExtent(extent.ValueExtent!.Value);
                         }
                     }
+
                     break;
                 case Operations.Union:
                     foreach (var extent in localExtent.Extents)
@@ -383,6 +404,7 @@ public static class Translator
                     }
                     break;
                 case Operations.Repetition:
+                    // if an extent is a simple character, it is stored for later reference, that also makes a corresponding state
                     {
                         var extent = localExtent.Extents[0];
                         if (extent.ValueType == ExtentValue.Type.Char)
@@ -396,8 +418,6 @@ public static class Translator
                         }
                         break;
                     }
-                default:
-                    throw new ArgumentOutOfRangeException("expectedOperation is out of range");
             }
         }
 
@@ -405,6 +425,7 @@ public static class Translator
 
         HashSet<State> MakeAutomaton(Extent localExtent, HashSet<State>? starterStates = null, HashSet<State>? repeaterStates = null)
         {
+            // Connecting all the states together
             var exitStates = new HashSet<State>();
             switch (localExtent.Operation)
             {
@@ -415,6 +436,7 @@ public static class Translator
                         var extent = localExtent.Extents[index];
                         if (extent.ValueType == ExtentValue.Type.Char)
                         {
+                            // Uses the next direct state, simple chaining
                             foreach (var starterState in starterStates)
                             {
                                 if (!starterState.Transitions.ContainsKey(extent.ValueChar!.Value))
@@ -429,6 +451,7 @@ public static class Translator
                             starterStates = [localExtent.States[directStates]];
                             if (index == localExtent.Extents.Count - 1)
                             {
+                                // In case we are within a repeater, and this is the last charcter, we need to add epsilon transitions to all possible loop start states
                                 exitStates.Add(localExtent.States[directStates]);
                                 if (repeaterStates != null)
                                 {
@@ -449,6 +472,7 @@ public static class Translator
                         }
                         else
                         {
+                            // Recurse and use the exits for chaining
                             HashSet<State> foundExits;
                             if (index == localExtent.Extents.Count - 1)
                             {
@@ -464,6 +488,7 @@ public static class Translator
                     }
                     break;
                 case Operations.Union:
+                    // Recurse deeper, bring out all found exits
                     foreach (var extent in localExtent.Extents)
                     {
                         if (extent.ValueType == ExtentValue.Type.Extent)
@@ -481,6 +506,7 @@ public static class Translator
                         var extent = localExtent.Extents[0];
                         if (extent.ValueType == ExtentValue.Type.Char)
                         {
+                            // Chain the character the same way as in concatenation, but also make it refer to itself
                             var state = localExtent.States[0];
                             foreach (var starterState in starterStates)
                             {
@@ -523,6 +549,7 @@ public static class Translator
                         }
                         else
                         {
+                            // Recurse and known starters and previous repeaters as loop entry points
                             if (repeaterStates != null)
                             {
                                 var t = new HashSet<State>(repeaterStates);
@@ -538,13 +565,79 @@ public static class Translator
                         }
                         break;
                     }
-                default:
-                    throw new ArgumentOutOfRangeException("expectedOperation is out of range");
             }
             return exitStates;
         }
 
         MakeAutomaton(fullExtent, [automaton.States[0]]);
+
+        void FindFinal()
+        {
+            // Final states either don't have any transitions or only refer to themselves
+            // Otherwise inescapable loops also have final states in their start
+            static HashSet<State> FindReachableStates(State state)
+            {
+                HashSet<State> reached = [state];
+                var newReached = new HashSet<State>();
+                bool changed = false;
+                while (true)
+                {
+                    foreach (var origin in reached)
+                    {
+                        foreach (var dest in origin.Transitions)
+                        {
+                            foreach (var target in dest.Value)
+                            {
+                                if (!reached.Contains(target))
+                                {
+                                    newReached.Add(target);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    if (!changed)
+                    {
+                        return reached;
+                    }
+                    else
+                    {
+                        reached.UnionWith(newReached);
+                        newReached.Clear();
+                        changed = false;
+                    }
+                }
+            }
+
+            foreach (var state in automaton.States)
+            {
+                if (state.Transitions.Count == 0 || FindReachableStates(state).Count == 1)
+                {
+                    state.Name = "*" + state.Name;
+                }
+                else if (automaton.States.Any(x=>x.Transitions.Any(y=>y.Key == 'ɛ' && y.Value.Contains(state))))
+                {
+                    bool closedLoop = true;
+                    var reachableStates = FindReachableStates(state);
+                    foreach (var test in reachableStates)
+                    {
+                        if (!FindReachableStates(test).SetEquals(reachableStates))
+                        {
+                            closedLoop = false;
+                            break;
+                        }
+                    }
+
+                    if (closedLoop)
+                    {
+                        state.Name = "*" + state.Name;
+                    }
+                }
+            }
+
+        }
+
+        FindFinal();
 
         static string MakeGraph(List<State> states)
         {
